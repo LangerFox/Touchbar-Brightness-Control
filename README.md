@@ -20,23 +20,11 @@ A lightweight, native macOS menu bar utility that adds a **real-time Touch Bar b
 
 ## 2. Installation
 
-### Option A: Download Prebuilt App
-1. Download `Touchbar-Brightness-Control-macOS-Universal.zip` from the repository or Releases and extract `Touchbar Brightness Control.app`.
-2. Move `Touchbar Brightness Control.app` to `/Applications`.
-3. Remove the browser quarantine attribute and launch:
-   ```bash
-   xattr -cr "/Applications/Touchbar Brightness Control.app"
-   open "/Applications/Touchbar Brightness Control.app"
-   ```
-
-### Option B: Build from Source
-Requires Xcode Command Line Tools (`xcode-select --install`). No external dependencies:
-```bash
-git clone https://github.com/LangerFox/Touchbar-Brightness-Control.git
-cd Touchbar-Brightness-Control
-make
-open "Touchbar Brightness Control.app"
-```
+1. Download **`Touchbar-Brightness-Control-macOS-Universal.zip`** from this repository (or Releases) and extract **`Touchbar Brightness Control.app`**.
+2. Drag **`Touchbar Brightness Control.app`** into your **`Applications`** folder and double-click to open it.
+3. On first launch, macOS will show an *"Apple could not verify..."* prompt (since this is a free open-source utility without a paid Apple Developer ID):
+   * Click **Done** (do **not** click Move to Trash).
+   * Go to **System Settings** -> **Privacy & Security**, scroll down to the **Security** section, and click **Open Anyway**.
 
 ---
 
