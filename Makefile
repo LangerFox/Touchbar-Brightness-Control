@@ -12,7 +12,7 @@ $(APP_TARGET): TouchbarBrightnessControl.m Info.plist AppIcon.icns
 	cp Info.plist "$(APP_BUNDLE)/Contents/Info.plist"
 	cp AppIcon.icns "$(RES_DIR)/AppIcon.icns"
 	clang -O2 -fobjc-arc -arch arm64 -arch x86_64 TouchbarBrightnessControl.m \
-		-framework Cocoa -framework CoreGraphics \
+		-framework Cocoa -framework CoreGraphics -framework ServiceManagement \
 		-mmacosx-version-min=12.0 \
 		-o "$(MACOS_DIR)/$(APP_NAME)"
 	codesign --force --deep --sign - "$(APP_BUNDLE)"

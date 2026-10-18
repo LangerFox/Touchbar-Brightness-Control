@@ -1,6 +1,8 @@
 #import <Cocoa/Cocoa.h>
+#import <ServiceManagement/ServiceManagement.h>
 #import <objc/runtime.h>
 #import <dlfcn.h>
+#import <sys/xattr.h>
 
 static const float kMinNits = 11.9f;
 static const float kMaxNits = 357.1f;
@@ -8,6 +10,8 @@ static const CFTimeInterval kSelfWriteIgnoreWindow = 0.25;
 static const CFTimeInterval kMinRetryInterval = 0.50;
 static const CFTimeInterval kBurstWindowDuration = 5.0;
 static const NSInteger kMaxBurstCount = 3;
+
+typedef CFURLRef (*SecTranslocateCreateOriginalPathForURLFn)(CFURLRef translocatedPath, CFErrorRef *error);
 
 @interface NSObject (CoreBrightnessPrivate)
 - (id)copyPropertyForKey:(id)key;
@@ -43,6 +47,9 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     if (bscCls) {
         self.bscClient = [[bscCls alloc] init];
     }
+
+    // If Launch at Login was already enabled, keep its path synced with the real (non-translocated) bundle path
+    [self syncLaunchAgentPathIfNeeded];
 
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
     if ([defs objectForKey:@"TargetBrightness"] != nil) {
@@ -163,18 +170,20 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
         id raw = [self.bscClient copyPropertyForKey:@"DisplayBrightness"];
         if ([raw isKindOfClass:[NSDictionary class]]) {
             NSDictionary *cur = (NSDictionary *)raw;
-            NSNumber *bNum = cur[@"Brightness"];
-            if ([bNum isKindOfClass:[NSNumber class]]) {
-                actualB = [bNum floatValue];
-            }
             NSNumber *nitsNum = cur[@"Nits"];
+            NSNumber *bNum = cur[@"Brightness"];
             if ([nitsNum isKindOfClass:[NSNumber class]]) {
                 nits = [nitsNum floatValue];
-            } else {
+                actualB = (nits - kMinNits) / (kMaxNits - kMinNits);
+            } else if ([bNum isKindOfClass:[NSNumber class]]) {
+                actualB = [bNum floatValue];
                 nits = kMinNits + actualB * (kMaxNits - kMinNits);
             }
         }
     }
+
+    if (actualB < 0.0f) actualB = 0.0f;
+    if (actualB > 1.0f) actualB = 1.0f;
 
     self.valueLabel.stringValue = [NSString stringWithFormat:@"%.0f%% (%.1f Nits)", actualB * 100.0f, nits];
 }
@@ -304,7 +313,7 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     [wsnc addObserverForName:NSWorkspaceDidWakeNotification object:nil queue:mainQ usingBlock:wakeBlock];
     [wsnc addObserverForName:NSWorkspaceScreensDidWakeNotification object:nil queue:mainQ usingBlock:wakeBlock];
 
-    // 3. CoreGraphics display reconfiguration callback (only when flags indicate display state change, not while asleep)
+    // 3. CoreGraphics display reconfiguration callback
     CGDisplayRegisterReconfigurationCallback(displayReconfigCallback, (__bridge void *)self);
 }
 
@@ -316,6 +325,32 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
         self.burstCount = 0;
         [self applyBrightness:self.targetBrightness save:NO];
     }
+}
+
+// Resolve real on-disk .app path even if macOS Gatekeeper launched the app inside /private/var/folders/.../AppTranslocation/
+- (NSString *)resolvedRealBundlePath {
+    NSURL *bundleURL = [[NSBundle mainBundle] bundleURL];
+    NSString *path = [bundleURL path];
+    if ([path containsString:@"/AppTranslocation/"]) {
+        void *sec = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY);
+        if (sec) {
+            SecTranslocateCreateOriginalPathForURLFn fn = (SecTranslocateCreateOriginalPathForURLFn)dlsym(sec, "SecTranslocateCreateOriginalPathForURL");
+            if (fn) {
+                CFURLRef origRef = fn((__bridge CFURLRef)bundleURL, NULL);
+                if (origRef) {
+                    NSURL *origURL = CFBridgingRelease(origRef);
+                    if ([origURL path]) {
+                        path = [origURL path];
+                    }
+                }
+            }
+        }
+    }
+    if (path) {
+        // Strip com.apple.quarantine from the real bundle so subsequent launches are never translocated
+        removexattr([path fileSystemRepresentation], "com.apple.quarantine", 0);
+    }
+    return path;
 }
 
 - (NSString *)launchAgentLabel {
@@ -331,30 +366,69 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
 }
 
 - (BOOL)isLaunchAgentInstalled {
+    if (@available(macOS 13.0, *)) {
+        if ([SMAppService mainAppService].status == SMAppServiceStatusEnabled) {
+            return YES;
+        }
+    }
     return [[NSFileManager defaultManager] fileExistsAtPath:[self launchAgentPath]];
+}
+
+- (BOOL)writeLaunchAgentPlist {
+    NSString *plistPath = [self launchAgentPath];
+    NSString *realBundlePath = [self resolvedRealBundlePath];
+    if (!realBundlePath) return NO;
+
+    NSDictionary *dict = @{
+        @"Label": [self launchAgentLabel],
+        @"ProgramArguments": @[@"/usr/bin/open", @"-a", realBundlePath],
+        @"RunAtLoad": @YES,
+        @"KeepAlive": @NO
+    };
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:[plistPath stringByDeletingLastPathComponent]
+  withIntermediateDirectories:YES
+                   attributes:nil
+                        error:nil];
+    return [dict writeToFile:plistPath atomically:YES];
+}
+
+- (void)syncLaunchAgentPathIfNeeded {
+    // Always strip quarantine on the real bundle path on startup
+    NSString *realPath = [self resolvedRealBundlePath];
+    (void)realPath;
+    if ([[NSFileManager defaultManager] fileExistsAtPath:[self launchAgentPath]]) {
+        [self writeLaunchAgentPlist];
+    }
 }
 
 - (void)toggleLaunchAtLogin:(NSMenuItem *)sender {
     NSString *plistPath = [self launchAgentPath];
     NSFileManager *fm = [NSFileManager defaultManager];
-    if ([fm fileExistsAtPath:plistPath]) {
-        [fm removeItemAtPath:plistPath error:nil];
+    BOOL currentlyEnabled = [self isLaunchAgentInstalled];
+
+    if (currentlyEnabled) {
+        if (@available(macOS 13.0, *)) {
+            [[SMAppService mainAppService] unregisterAndReturnError:nil];
+        }
+        if ([fm fileExistsAtPath:plistPath]) {
+            [fm removeItemAtPath:plistPath error:nil];
+        }
         sender.state = NSControlStateValueOff;
     } else {
-        // Dynamically grab the current executable location on this machine when the user checks Launch at Login
-        NSString *execPath = [[NSBundle mainBundle] executablePath];
-        if (!execPath) return;
-        NSDictionary *dict = @{
-            @"Label": [self launchAgentLabel],
-            @"ProgramArguments": @[execPath],
-            @"RunAtLoad": @YES,
-            @"KeepAlive": @NO
-        };
-        [fm createDirectoryAtPath:[plistPath stringByDeletingLastPathComponent]
-      withIntermediateDirectories:YES
-                       attributes:nil
-                            error:nil];
-        if ([dict writeToFile:plistPath atomically:YES]) {
+        BOOL registered = NO;
+        NSString *bundlePath = [[[NSBundle mainBundle] bundleURL] path] ?: @"";
+        // Prefer native macOS 13+ SMAppService when not running from a temporary AppTranslocation mount
+        if (@available(macOS 13.0, *)) {
+            if (![bundlePath containsString:@"/AppTranslocation/"]) {
+                registered = [[SMAppService mainAppService] registerAndReturnError:nil];
+            }
+        }
+        // Fallback to LaunchAgents plist (with de-translocated real path) if SMAppService is unavailable or translocated
+        if (!registered) {
+            registered = [self writeLaunchAgentPlist];
+        }
+        if (registered) {
             sender.state = NSControlStateValueOn;
         }
     }
