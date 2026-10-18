@@ -1,13 +1,15 @@
 APP_NAME = Touchbar Brightness Control
 APP_BUNDLE = $(APP_NAME).app
 MACOS_DIR = $(APP_BUNDLE)/Contents/MacOS
+RES_DIR = $(APP_BUNDLE)/Contents/Resources
 ZIP_NAME = Touchbar-Brightness-Control-macOS-Universal.zip
 
 all: $(APP_BUNDLE)
 
-$(APP_BUNDLE): TouchbarBrightnessControl.m Info.plist
-	mkdir -p "$(MACOS_DIR)"
+$(APP_BUNDLE): TouchbarBrightnessControl.m Info.plist AppIcon.icns
+	mkdir -p "$(MACOS_DIR)" "$(RES_DIR)"
 	cp Info.plist "$(APP_BUNDLE)/Contents/Info.plist"
+	cp AppIcon.icns "$(RES_DIR)/AppIcon.icns"
 	clang -O2 -fobjc-arc -arch arm64 -arch x86_64 TouchbarBrightnessControl.m \
 		-framework Cocoa -framework CoreGraphics \
 		-mmacosx-version-min=12.0 \
