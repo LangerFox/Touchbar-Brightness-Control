@@ -58,10 +58,10 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
     NSStatusBarButton *btn = self.statusItem.button;
     NSImage *img = [NSImage imageWithSystemSymbolName:@"slider.horizontal.below.rectangle"
-                             accessibilityDescription:@"Touch Bar Brightness"];
+                             accessibilityDescription:@"Touchbar Brightness Control"];
     if (!img) {
         img = [NSImage imageWithSystemSymbolName:@"sun.max.fill"
-                        accessibilityDescription:@"Touch Bar Brightness"];
+                        accessibilityDescription:@"Touchbar Brightness Control"];
     }
     if (img) {
         [img setTemplate:YES];
@@ -69,15 +69,15 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     } else {
         btn.title = @"TB";
     }
-    btn.toolTip = @"Touch Bar Brightness Control";
+    btn.toolTip = @"Touchbar Brightness Control";
 
-    self.menu = [[NSMenu alloc] initWithTitle:@"TouchBarBright"];
+    self.menu = [[NSMenu alloc] initWithTitle:@"Touchbar Brightness Control"];
     self.menu.delegate = self;
     self.menu.autoenablesItems = NO;
 
     NSView *panel = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 92)];
 
-    NSTextField *titleLabel = [NSTextField labelWithString:@"Touch Bar Brightness"];
+    NSTextField *titleLabel = [NSTextField labelWithString:@"Touchbar Brightness"];
     titleLabel.font = [NSFont boldSystemFontOfSize:12.5];
     titleLabel.frame = NSMakeRect(16, 64, 145, 18);
     [panel addSubview:titleLabel];
@@ -134,7 +134,7 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
 
     [self.menu addItem:[NSMenuItem separatorItem]];
 
-    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit TouchBarBright"
+    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit Touchbar Brightness Control"
                                                       action:@selector(terminate:)
                                                keyEquivalent:@"q"];
     quitItem.target = NSApp;
@@ -257,7 +257,7 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
 }
 
 - (NSString *)launchAgentPath {
-    return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents/com.lfx.TouchBarBright.plist"];
+    return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents/com.lfx.TouchbarBrightnessControl.plist"];
 }
 
 - (BOOL)isLaunchAgentInstalled {
@@ -273,7 +273,7 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     } else {
         NSString *execPath = [[NSBundle mainBundle] executablePath];
         NSDictionary *dict = @{
-            @"Label": @"com.lfx.TouchBarBright",
+            @"Label": @"com.lfx.TouchbarBrightnessControl",
             @"ProgramArguments": @[execPath],
             @"RunAtLoad": @YES,
             @"KeepAlive": @NO

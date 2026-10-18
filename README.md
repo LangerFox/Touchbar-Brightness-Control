@@ -1,4 +1,4 @@
-# TouchBarBright — Native macOS Touch Bar Brightness Slider & Broken ALS Wake-Dimming Fix
+# Touchbar Brightness Control — Native macOS Touch Bar Brightness Slider & Broken ALS Wake-Dimming Fix
 
 A lightweight (`~100 KB`), zero-polling (`0.0%` idle CPU, `0` idle wakeups), pure Objective-C/AppKit menu bar utility for MacBook Pro models with a Touch Bar (2016–2020 Intel & 2020–2022 Apple Silicon M1/M2 13-inch).
 
@@ -32,9 +32,9 @@ Inside `/System/Library/PrivateFrameworks/CoreBrightness.framework`, macOS manag
 
 ---
 
-## How `TouchBarBright` Fixes It
+## How `Touchbar Brightness Control` Fixes It
 
-`TouchBarBright` communicates directly with `CoreBrightness.framework`'s `BrightnessSystemClient` interface:
+`Touchbar Brightness Control` communicates directly with `CoreBrightness.framework`'s `BrightnessSystemClient` interface:
 ```objc
 [client setProperty:@NO forKey:@"DisplayBrightnessAuto"];
 [client setProperty:@(targetBrightness) forKey:@"DisplayBrightness"];
@@ -47,7 +47,7 @@ Inside `/System/Library/PrivateFrameworks/CoreBrightness.framework`, macOS manag
 * **100% Event-Driven Wake Guard (`0 Hz` Polling)**:
   * Subscribes to `CoreBrightness` XPC property notifications (`registerNotificationBlock:forProperties:`), `NSWorkspaceDidWakeNotification`, `NSWorkspaceScreensDidWakeNotification`, and `CGDisplayRegisterReconfigurationCallback`.
   * Uses **zero timers** when idle: `0.0%` CPU usage and `0` Idle Wakeups in Activity Monitor.
-* **Launch at Login**: Built-in one-click toggle that manages `~/Library/LaunchAgents/com.lfx.TouchBarBright.plist`.
+* **Launch at Login**: Built-in one-click toggle that manages `~/Library/LaunchAgents/com.lfx.TouchbarBrightnessControl.plist`.
 * **Universal Binary (`arm64` + `x86_64`)**: Runs natively on M1/M2 13-inch MacBook Pros (`A2338`) and 2016–2020 Intel Touch Bar MacBook Pros.
 
 ---
@@ -55,21 +55,21 @@ Inside `/System/Library/PrivateFrameworks/CoreBrightness.framework`, macOS manag
 ## Installation & Building from Source
 
 ### Option 1: Download Prebuilt Universal App
-1. Download `TouchBarBright-macOS-Universal.zip` from Releases and extract `TouchBarBright.app`.
-2. Move `TouchBarBright.app` to `/Applications`.
+1. Download `Touchbar-Brightness-Control-macOS-Universal.zip` from Releases and extract `Touchbar Brightness Control.app`.
+2. Move `Touchbar Brightness Control.app` to `/Applications`.
 3. If macOS Gatekeeper prompts that the app is ad-hoc signed, run:
    ```bash
-   xattr -cr /Applications/TouchBarBright.app
-   open /Applications/TouchBarBright.app
+   xattr -cr "/Applications/Touchbar Brightness Control.app"
+   open "/Applications/Touchbar Brightness Control.app"
    ```
 
 ### Option 2: Build from Source (Requires Xcode Command Line Tools)
-The entire application is contained in a single ~250-line Objective-C file (`TouchBarBright.m`) with zero external dependencies:
+The entire application is contained in a single Objective-C file (`TouchbarBrightnessControl.m`) with zero external dependencies:
 ```bash
-git clone https://github.com/YOUR_USERNAME/TouchBarBright.git
-cd TouchBarBright
+git clone https://github.com/YOUR_USERNAME/Touchbar-Brightness-Control.git
+cd Touchbar-Brightness-Control
 make
-open TouchBarBright.app
+open "Touchbar Brightness Control.app"
 ```
 
 ---
@@ -82,7 +82,7 @@ open TouchBarBright.app
 * **剛重開機時**：Touch Bar 顯示控制器預設以原廠中間值 **`50%` (`184.5 Nits`)** 點亮，一切正常。
 * **只要把螢幕蓋上再打開（或休眠喚醒）**：macOS 底層的 `CoreBrightness.framework` (`CBAutoBrightnessModuleDFR`) 會在喚醒時重新讀取 ALS 照度；因為感測器斷電回傳 `0 Lux`（全黑），系統就會把 Touch Bar 強制壓到最低的第 0 階（**`Brightness = 0` / `11.89999 Nits`**），而且因為 macOS 早已移除手動調整 Touch Bar 亮度的設定，除非重開機否則永遠無法恢復亮度。
 
-### `TouchBarBright` 功能特色
+### `Touchbar Brightness Control` 功能特色
 1. **macOS 原生頂層選單列 (Menu Bar) 無段滑桿**：隨時拉動滑桿即時調整 Touch Bar 亮度（`11.9 Nits` ～ `357.1 Nits`），並提供 `Min` / `25%` / `50% (原廠 184.5 Nits)` / `75%` / `Max` 五顆快速鍵。
 2. **純事件驅動開蓋防暗守護 (`0 Hz` 零輪詢)**：完全不採用 Timer 輪詢，平時休眠於核心 `mach_msg2_trap`（CPU 佔用率 `0.0%`、Idle Wakeups 為 `0`），只在螢幕喚醒或 `corebrightnessd` 重置亮度時瞬間介入鎖定亮度並關閉 `DisplayBrightnessAuto`。
 3. **一鍵開機自啟 (`Launch at Login`)**：直接在選單內打勾即可自動寫入 `~/Library/LaunchAgents`。
