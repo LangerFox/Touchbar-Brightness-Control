@@ -2,6 +2,13 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 
+static const float kMinNits = 11.9f;
+static const float kMaxNits = 357.1f;
+static const CFTimeInterval kSelfWriteIgnoreWindow = 0.25;
+static const CFTimeInterval kMinRetryInterval = 0.50;
+static const CFTimeInterval kBurstWindowDuration = 5.0;
+static const NSInteger kMaxBurstCount = 3;
+
 @interface NSObject (CoreBrightnessPrivate)
 - (id)copyPropertyForKey:(id)key;
 - (BOOL)setProperty:(id)prop forKey:(id)key;
@@ -19,7 +26,11 @@
 @property (strong) id bscClient;
 @property (assign) float targetBrightness;
 @property (assign) BOOL wakeGuardEnabled;
-@property (assign) BOOL isApplying;
+@property (assign) BOOL screensSleeping;
+@property (assign) CFAbsoluteTime lastApplyTime;
+@property (assign) CFAbsoluteTime lastAutoRestoreTime;
+@property (assign) CFAbsoluteTime burstWindowStart;
+@property (assign) NSInteger burstCount;
 @end
 
 static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSummaryFlags flags, void *userInfo);
@@ -38,7 +49,8 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
         self.targetBrightness = [defs floatForKey:@"TargetBrightness"];
     } else {
         NSDictionary *cur = [self.bscClient copyPropertyForKey:@"DisplayBrightness"];
-        float curB = cur ? [[cur objectForKey:@"Brightness"] floatValue] : 0.50f;
+        NSNumber *curNum = [cur isKindOfClass:[NSDictionary class]] ? cur[@"Brightness"] : nil;
+        float curB = curNum ? [curNum floatValue] : 0.50f;
         if (curB <= 0.01f) curB = 0.50f;
         self.targetBrightness = curB;
     }
@@ -143,22 +155,39 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     self.statusItem.menu = self.menu;
 }
 
-- (void)menuWillOpen:(NSMenu *)menu {
-    // Only query hardware state when the user actually clicks the menu bar icon
+- (void)updateValueLabelFromHardwareOrFallback:(float)fallbackVal {
+    float actualB = fallbackVal;
+    float nits = kMinNits + fallbackVal * (kMaxNits - kMinNits);
+
     if (self.bscClient) {
-        NSDictionary *cur = [self.bscClient copyPropertyForKey:@"DisplayBrightness"];
-        if (cur) {
-            float actualB = [[cur objectForKey:@"Brightness"] floatValue];
-            float nits = [[cur objectForKey:@"Nits"] floatValue];
-            self.valueLabel.stringValue = [NSString stringWithFormat:@"%.0f%% (%.1f Nits)", actualB * 100.0f, nits];
+        id raw = [self.bscClient copyPropertyForKey:@"DisplayBrightness"];
+        if ([raw isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *cur = (NSDictionary *)raw;
+            NSNumber *bNum = cur[@"Brightness"];
+            if ([bNum isKindOfClass:[NSNumber class]]) {
+                actualB = [bNum floatValue];
+            }
+            NSNumber *nitsNum = cur[@"Nits"];
+            if ([nitsNum isKindOfClass:[NSNumber class]]) {
+                nits = [nitsNum floatValue];
+            } else {
+                nits = kMinNits + actualB * (kMaxNits - kMinNits);
+            }
         }
     }
+
+    self.valueLabel.stringValue = [NSString stringWithFormat:@"%.0f%% (%.1f Nits)", actualB * 100.0f, nits];
+}
+
+- (void)menuWillOpen:(NSMenu *)menu {
+    [self updateValueLabelFromHardwareOrFallback:self.targetBrightness];
     self.loginItem.state = [self isLaunchAgentInstalled] ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
 - (void)sliderChanged:(NSSlider *)sender {
     float val = sender.floatValue;
     self.targetBrightness = val;
+    self.burstCount = 0;
     [self applyBrightness:val save:YES];
 }
 
@@ -166,6 +195,7 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     float val = (float)sender.tag / 100.0f;
     self.targetBrightness = val;
     self.slider.floatValue = val;
+    self.burstCount = 0;
     [self applyBrightness:val save:YES];
 }
 
@@ -173,19 +203,15 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     if (val < 0.0f) val = 0.0f;
     if (val > 1.0f) val = 1.0f;
 
-    self.isApplying = YES;
+    // Record timestamp BEFORE and AFTER writing so async XPC echo callbacks within 0.25s are ignored
+    self.lastApplyTime = CFAbsoluteTimeGetCurrent();
     if (self.bscClient) {
         [self.bscClient setProperty:@NO forKey:@"DisplayBrightnessAuto"];
         [self.bscClient setProperty:@(val) forKey:@"DisplayBrightness"];
-        NSDictionary *cur = [self.bscClient copyPropertyForKey:@"DisplayBrightness"];
-        float actualB = cur ? [[cur objectForKey:@"Brightness"] floatValue] : val;
-        float nits = cur ? [[cur objectForKey:@"Nits"] floatValue] : (11.9f + val * (357.1f - 11.9f));
-        self.valueLabel.stringValue = [NSString stringWithFormat:@"%.0f%% (%.1f Nits)", actualB * 100.0f, nits];
-    } else {
-        float nits = 11.9f + val * (357.1f - 11.9f);
-        self.valueLabel.stringValue = [NSString stringWithFormat:@"%.0f%% (%.1f Nits)", val * 100.0f, nits];
     }
-    self.isApplying = NO;
+    self.lastApplyTime = CFAbsoluteTimeGetCurrent();
+
+    [self updateValueLabelFromHardwareOrFallback:val];
 
     if (save) {
         NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
@@ -193,14 +219,50 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     }
 }
 
+- (void)attemptAutoRestoreIfNeeded {
+    if (!self.wakeGuardEnabled || self.screensSleeping || !self.bscClient) return;
+
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    // 1. Ignore notifications caused by our own recent write
+    if (now - self.lastApplyTime < kSelfWriteIgnoreWindow) return;
+
+    // 2. Minimum interval rate limit (>= 0.5s between auto-restores)
+    if (now - self.lastAutoRestoreTime < kMinRetryInterval) return;
+
+    // 3. Check whether hardware brightness actually drifted from targetBrightness
+    id raw = [self.bscClient copyPropertyForKey:@"DisplayBrightness"];
+    if (![raw isKindOfClass:[NSDictionary class]]) return;
+    NSNumber *bNum = ((NSDictionary *)raw)[@"Brightness"];
+    if (![bNum isKindOfClass:[NSNumber class]]) return;
+
+    float curB = [bNum floatValue];
+    // Allow ~6% tolerance for the 11-step NitsToUserBrightnessTable quantization
+    if (fabsf(curB - self.targetBrightness) <= 0.06f) return;
+
+    // 4. Burst limit: at most 3 auto-restores per 5-second window
+    if (now - self.burstWindowStart > kBurstWindowDuration) {
+        self.burstWindowStart = now;
+        self.burstCount = 0;
+    }
+    if (self.burstCount >= kMaxBurstCount) return;
+
+    self.burstCount++;
+    self.lastAutoRestoreTime = now;
+    [self applyBrightness:self.targetBrightness save:NO];
+}
+
 - (void)restoreOnWakeSequence {
+    self.screensSleeping = NO;
+    self.burstCount = 0;
+    self.burstWindowStart = CFAbsoluteTimeGetCurrent();
     if (!self.wakeGuardEnabled) return;
+
     [self applyBrightness:self.targetBrightness save:NO];
     __weak typeof(self) weakSelf = self;
-    for (NSNumber *delayMs in @[@250, @800, @1800]) {
+    for (NSNumber *delayMs in @[@300, @900, @1800]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delayMs.intValue * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
             __strong typeof(weakSelf) strongSelf = weakSelf;
-            if (strongSelf && strongSelf.wakeGuardEnabled) {
+            if (strongSelf && strongSelf.wakeGuardEnabled && !strongSelf.screensSleeping) {
                 [strongSelf applyBrightness:strongSelf.targetBrightness save:NO];
             }
         });
@@ -210,18 +272,10 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
 - (void)setupEventDrivenWakeObservers {
     __weak typeof(self) weakSelf = self;
 
-    // 1. Pure event-driven CoreBrightness XPC notification (0 polling when idle)
+    // 1. Pure event-driven CoreBrightness XPC notification with time-window suppression & burst rate-limiting
     void (^cbBlock)(id, id) = ^(id key, id val) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            __strong typeof(weakSelf) strongSelf = weakSelf;
-            if (!strongSelf || !strongSelf.wakeGuardEnabled || strongSelf.isApplying) return;
-            NSDictionary *d = [strongSelf.bscClient copyPropertyForKey:@"DisplayBrightness"];
-            if (d) {
-                float curB = [[d objectForKey:@"Brightness"] floatValue];
-                if (curB <= 0.01f && strongSelf.targetBrightness > 0.02f) {
-                    [strongSelf applyBrightness:strongSelf.targetBrightness save:NO];
-                }
-            }
+            [weakSelf attemptAutoRestoreIfNeeded];
         });
     };
 
@@ -234,16 +288,23 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
         }
     }
 
-    // 2. Pure event-driven macOS Workspace sleep/screen-wake notifications
+    // 2. Track screen/system sleep & wake states so we never fight CoreBrightness while the lid is closed
     NSNotificationCenter *wsnc = [[NSWorkspace sharedWorkspace] notificationCenter];
     NSOperationQueue *mainQ = [NSOperationQueue mainQueue];
+    void (^sleepBlock)(NSNotification *) = ^(NSNotification *note) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf) strongSelf.screensSleeping = YES;
+    };
     void (^wakeBlock)(NSNotification *) = ^(NSNotification *note) {
         [weakSelf restoreOnWakeSequence];
     };
+
+    [wsnc addObserverForName:NSWorkspaceWillSleepNotification object:nil queue:mainQ usingBlock:sleepBlock];
+    [wsnc addObserverForName:NSWorkspaceScreensDidSleepNotification object:nil queue:mainQ usingBlock:sleepBlock];
     [wsnc addObserverForName:NSWorkspaceDidWakeNotification object:nil queue:mainQ usingBlock:wakeBlock];
     [wsnc addObserverForName:NSWorkspaceScreensDidWakeNotification object:nil queue:mainQ usingBlock:wakeBlock];
 
-    // 3. Pure event-driven CoreGraphics display power/reconfiguration callback
+    // 3. CoreGraphics display reconfiguration callback (only when flags indicate display state change, not while asleep)
     CGDisplayRegisterReconfigurationCallback(displayReconfigCallback, (__bridge void *)self);
 }
 
@@ -252,12 +313,21 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     sender.state = self.wakeGuardEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     [[NSUserDefaults standardUserDefaults] setBool:self.wakeGuardEnabled forKey:@"WakeGuardEnabled"];
     if (self.wakeGuardEnabled) {
+        self.burstCount = 0;
         [self applyBrightness:self.targetBrightness save:NO];
     }
 }
 
+- (NSString *)launchAgentLabel {
+    return [[NSBundle mainBundle] bundleIdentifier] ?: @"app.touchbar.BrightnessControl";
+}
+
 - (NSString *)launchAgentPath {
-    return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents/com.lfx.TouchbarBrightnessControl.plist"];
+    NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES);
+    NSString *libDir = paths.firstObject ?: [NSHomeDirectory() stringByAppendingPathComponent:@"Library"];
+    NSString *agentsDir = [libDir stringByAppendingPathComponent:@"LaunchAgents"];
+    NSString *fileName = [[self launchAgentLabel] stringByAppendingString:@".plist"];
+    return [agentsDir stringByAppendingPathComponent:fileName];
 }
 
 - (BOOL)isLaunchAgentInstalled {
@@ -271,9 +341,11 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
         [fm removeItemAtPath:plistPath error:nil];
         sender.state = NSControlStateValueOff;
     } else {
+        // Dynamically grab the current executable location on this machine when the user checks Launch at Login
         NSString *execPath = [[NSBundle mainBundle] executablePath];
+        if (!execPath) return;
         NSDictionary *dict = @{
-            @"Label": @"com.lfx.TouchbarBrightnessControl",
+            @"Label": [self launchAgentLabel],
             @"ProgramArguments": @[execPath],
             @"RunAtLoad": @YES,
             @"KeepAlive": @NO
@@ -282,18 +354,20 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
       withIntermediateDirectories:YES
                        attributes:nil
                             error:nil];
-        [dict writeToFile:plistPath atomically:YES];
-        sender.state = NSControlStateValueOn;
+        if ([dict writeToFile:plistPath atomically:YES]) {
+            sender.state = NSControlStateValueOn;
+        }
     }
 }
 
 @end
 
 static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSummaryFlags flags, void *userInfo) {
+    if ((flags & kCGDisplayBeginConfigurationFlag) != 0) return;
     AppDelegate *del = (__bridge AppDelegate *)userInfo;
-    if (del && del.wakeGuardEnabled) {
+    if (del && del.wakeGuardEnabled && !del.screensSleeping) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            [del restoreOnWakeSequence];
+            [del attemptAutoRestoreIfNeeded];
         });
     }
 }

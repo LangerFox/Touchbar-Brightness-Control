@@ -5,7 +5,7 @@
     <key>CFBundleExecutable</key>
     <string>Touchbar Brightness Control</string>
     <key>CFBundleIdentifier</key>
-    <string>com.lfx.TouchbarBrightnessControl</string>
+    <string>app.touchbar.BrightnessControl</string>
     <key>CFBundleName</key>
     <string>Touchbar Brightness Control</string>
     <key>CFBundleDisplayName</key>
