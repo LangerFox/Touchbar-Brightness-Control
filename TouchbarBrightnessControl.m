@@ -75,18 +75,18 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
     self.menu.delegate = self;
     self.menu.autoenablesItems = NO;
 
-    NSView *panel = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 92)];
+    NSView *panel = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 112)];
 
     NSTextField *titleLabel = [NSTextField labelWithString:@"Touchbar Brightness"];
     titleLabel.font = [NSFont boldSystemFontOfSize:12.5];
-    titleLabel.frame = NSMakeRect(16, 64, 145, 18);
+    titleLabel.frame = NSMakeRect(16, 84, 228, 18);
     [panel addSubview:titleLabel];
 
     self.valueLabel = [NSTextField labelWithString:@"50% (184.5 Nits)"];
     self.valueLabel.font = [NSFont monospacedDigitSystemFontOfSize:11.5 weight:NSFontWeightMedium];
     self.valueLabel.textColor = [NSColor secondaryLabelColor];
-    self.valueLabel.alignment = NSTextAlignmentRight;
-    self.valueLabel.frame = NSMakeRect(145, 64, 100, 18);
+    self.valueLabel.alignment = NSTextAlignmentLeft;
+    self.valueLabel.frame = NSMakeRect(16, 62, 228, 18);
     [panel addSubview:self.valueLabel];
 
     self.slider = [NSSlider sliderWithValue:self.targetBrightness
@@ -118,7 +118,7 @@ static void displayReconfigCallback(CGDirectDisplayID display, CGDisplayChangeSu
 
     [self.menu addItem:[NSMenuItem separatorItem]];
 
-    self.wakeGuardItem = [[NSMenuItem alloc] initWithTitle:@"Lock Brightness on Lid Wake (Fix ALS)"
+    self.wakeGuardItem = [[NSMenuItem alloc] initWithTitle:@"Lock Brightness on Lid Wake (Broken ALS)"
                                                     action:@selector(toggleWakeGuard:)
                                              keyEquivalent:@""];
     self.wakeGuardItem.target = self;
