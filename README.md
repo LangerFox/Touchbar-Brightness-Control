@@ -16,6 +16,11 @@ A lightweight, native macOS menu bar utility that adds a **real-time Touch Bar b
 * **Zero Background Overhead (`0 Hz` Polling)**: 100% event-driven architecture (`0.0%` idle CPU usage and `0` Idle Wakeups in Activity Monitor).
 * **Launch at Login**: Built-in toggle to start automatically on login.
 
+  <p align="center">
+  <img src="Screenshot.jpg" width="480">
+</p>
+
+
 ---
 
 ## 2. Installation
