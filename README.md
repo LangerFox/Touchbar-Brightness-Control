@@ -14,7 +14,7 @@ A lightweight, native macOS menu bar utility that adds a **real-time Touch Bar b
 * **Quick Presets**: One-click buttons for `Min` (`11.9 Nits`), `25%` (`98.2 Nits`), `50%` (`184.5 Nits`, factory default), `75%` (`270.8 Nits`), and `Max` (`357.1 Nits`).
 * **Broken ALS Wake Lock**: Automatically prevents macOS from dropping Touch Bar brightness to minimum when closing and reopening the lid.
 * **Zero Background Overhead (`0 Hz` Polling)**: 100% event-driven architecture (`0.0%` idle CPU usage and `0` Idle Wakeups in Activity Monitor).
-(Failed)* **Launch at Login**: Built-in toggle to start automatically on login. (Not working at the moment, i have no idea why, but i'll try) --lfx
+* **(Failed)Launch at Login**: Built-in toggle to start automatically on login. (Not working at the moment, i have no idea why, but i'll try) --lfx
 
   <p align="center">
   <img src="Screenshot.jpg" width="480">
