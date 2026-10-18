@@ -87,6 +87,9 @@ To achieve `0.0%` idle CPU usage without polling timers, the app sleeps in kerne
 3. `CGDisplayRegisterReconfigurationCallback`
 
 ---
+README by Gemini 4 Argon
+
+Icon by LangerFox
 
 ## License
 
